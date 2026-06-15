@@ -1,0 +1,767 @@
+
+# RANI AVANTI BAI HYDEL POWER STATION
+# COMPLETE OPERATION MONITORING DASHBOARD
+# Google Colab Ready Code
+#
+# Includes:
+# - Previous operating parameters and graphs
+# - Generator winding-temperature monitoring
+# - Warning above 70 deg C and critical alarm at 75 deg C
+# - Temperature-management tips
+# - CSV export containing every data point
+# ============================================================
+
+!pip install -q pandas plotly
+
+import math
+import random
+import time
+from datetime import datetime, timedelta
+
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from IPython.display import display, HTML, clear_output
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+PLANT_NAME = "Rani Avanti Bai Hydel Power Station"
+UNIT_NAME = "Generating Unit - 1"
+
+FLOW_UNIT = "m^3/s"
+SHIFT_ENERGY_UNIT = "MU"
+
+# Current observed values.
+# Temperature is deliberately 72 deg C so the warning appears immediately.
+REFERENCE_READING = {
+    "active_power_mw": 34.10,
+    "energy_shift": 0.2721,
+    "generator_voltage_kv": 11.00,
+    "frequency_hz": 50.00,
+    "reservoir_level_m": 409.55,
+    "effective_head_m": 39.85,
+    "water_discharge": 97.50,
+    "gate_opening_pct": 56.25,
+    "generator_rpm": 166.60,
+    "generator_winding_temp_c": 72.00
+}
+
+# Demonstration limits only. Use authorised plant settings for real operation.
+THRESHOLDS = {
+    "minimum_active_power_mw": 30.00,
+    "voltage_low_kv": 10.50,
+    "voltage_high_kv": 11.50,
+    "frequency_low_hz": 49.50,
+    "frequency_high_hz": 50.50,
+    "reservoir_high_m": 410.00,
+    "minimum_effective_head_m": 37.00,
+    "minimum_discharge": 85.00,
+    "gate_opening_high_pct": 90.00,
+    "rpm_low": 160.00,
+    "rpm_high": 173.00,
+    "winding_temp_warning_c": 70.00,
+    "winding_temp_critical_c": 75.00
+}
+
+# ============================================================
+# DATA GENERATION
+# ============================================================
+
+def generate_historical_data(hours=15 * 24):
+    """Generate 15 days of sample history near the observed values."""
+
+    rows = []
+    start_time = datetime.now() - timedelta(hours=hours)
+
+    for index in range(hours):
+        timestamp = start_time + timedelta(hours=index)
+        wave = math.sin(index / 14)
+
+        winding_temp = (
+            63.0
+            + (2.1 * wave)
+            + random.uniform(-0.8, 0.8)
+        )
+
+        # Occasional abnormal values demonstrate alert behavior.
+        if index != 0 and index % 120 == 0:
+            active_power = 27.80
+            effective_head = 36.70
+            discharge = 81.50
+            winding_temp = 71.50
+        else:
+            active_power = (
+                REFERENCE_READING["active_power_mw"]
+                + (1.10 * wave)
+                + random.uniform(-0.35, 0.35)
+            )
+            effective_head = (
+                REFERENCE_READING["effective_head_m"]
+                + (0.35 * wave)
+                + random.uniform(-0.08, 0.08)
+            )
+            discharge = (
+                REFERENCE_READING["water_discharge"]
+                + (3.20 * wave)
+                + random.uniform(-0.80, 0.80)
+            )
+
+        rows.append({
+            "timestamp": timestamp,
+            "active_power_mw": round(active_power, 2),
+            "energy_shift": round(
+                REFERENCE_READING["energy_shift"]
+                + random.uniform(-0.008, 0.008), 4
+            ),
+            "generator_voltage_kv": round(
+                REFERENCE_READING["generator_voltage_kv"]
+                + random.uniform(-0.08, 0.08), 2
+            ),
+            "frequency_hz": round(
+                REFERENCE_READING["frequency_hz"]
+                + random.uniform(-0.05, 0.05), 2
+            ),
+            "reservoir_level_m": round(
+                REFERENCE_READING["reservoir_level_m"]
+                + (0.18 * math.sin(index / 36))
+                + random.uniform(-0.03, 0.03), 2
+            ),
+            "effective_head_m": round(effective_head, 2),
+            "water_discharge": round(discharge, 2),
+            "gate_opening_pct": round(
+                REFERENCE_READING["gate_opening_pct"]
+                + (2.20 * wave)
+                + random.uniform(-0.45, 0.45), 2
+            ),
+            "generator_rpm": round(
+                REFERENCE_READING["generator_rpm"]
+                + random.uniform(-0.25, 0.25), 2
+            ),
+            "generator_winding_temp_c": round(winding_temp, 2),
+            "data_source": "Simulated Historical Data"
+        })
+
+    # Store the exact observed reading as the latest data point.
+    rows.append({
+        "timestamp": datetime.now(),
+        **REFERENCE_READING,
+        "data_source": "Observed Control Room Reading"
+    })
+
+    return pd.DataFrame(rows)
+
+
+def generate_live_reading():
+    """Generate one new live sample near the observed values."""
+
+    return {
+        "timestamp": datetime.now(),
+        "active_power_mw": round(
+            REFERENCE_READING["active_power_mw"]
+            + random.uniform(-0.50, 0.50), 2
+        ),
+        "energy_shift": round(
+            REFERENCE_READING["energy_shift"]
+            + random.uniform(-0.004, 0.004), 4
+        ),
+        "generator_voltage_kv": round(
+            REFERENCE_READING["generator_voltage_kv"]
+            + random.uniform(-0.04, 0.04), 2
+        ),
+        "frequency_hz": round(
+            REFERENCE_READING["frequency_hz"]
+            + random.uniform(-0.03, 0.03), 2
+        ),
+        "reservoir_level_m": round(
+            REFERENCE_READING["reservoir_level_m"]
+            + random.uniform(-0.05, 0.05), 2
+        ),
+        "effective_head_m": round(
+            REFERENCE_READING["effective_head_m"]
+            + random.uniform(-0.10, 0.10), 2
+        ),
+        "water_discharge": round(
+            REFERENCE_READING["water_discharge"]
+            + random.uniform(-1.20, 1.20), 2
+        ),
+        "gate_opening_pct": round(
+            REFERENCE_READING["gate_opening_pct"]
+            + random.uniform(-0.70, 0.70), 2
+        ),
+        "generator_rpm": round(
+            REFERENCE_READING["generator_rpm"]
+            + random.uniform(-0.18, 0.18), 2
+        ),
+        "generator_winding_temp_c": round(
+            REFERENCE_READING["generator_winding_temp_c"]
+            + random.uniform(-1.20, 1.20), 2
+        ),
+        "data_source": "Live Simulated Reading"
+    }
+
+# ============================================================
+# ALERT SYSTEM
+# ============================================================
+
+def evaluate_alerts(latest):
+    """Return operational alerts for the latest reading."""
+
+    alerts = []
+
+    def add_alert(severity, alert_type, value, message):
+        alerts.append({
+            "severity": severity,
+            "alert_type": alert_type,
+            "measured_value": value,
+            "message": message
+        })
+
+    if latest["active_power_mw"] < THRESHOLDS["minimum_active_power_mw"]:
+        add_alert(
+            "WARNING", "Low Active Power",
+            latest["active_power_mw"],
+            "Active power is below the selected operating limit."
+        )
+
+    if not (
+        THRESHOLDS["voltage_low_kv"]
+        <= latest["generator_voltage_kv"]
+        <= THRESHOLDS["voltage_high_kv"]
+    ):
+        add_alert(
+            "WARNING", "Generator Voltage Deviation",
+            latest["generator_voltage_kv"],
+            "Generator voltage is outside the selected monitoring band."
+        )
+
+    if not (
+        THRESHOLDS["frequency_low_hz"]
+        <= latest["frequency_hz"]
+        <= THRESHOLDS["frequency_high_hz"]
+    ):
+        add_alert(
+            "CRITICAL", "Frequency Deviation",
+            latest["frequency_hz"],
+            "Frequency is outside the selected monitoring band."
+        )
+
+    if latest["reservoir_level_m"] >= THRESHOLDS["reservoir_high_m"]:
+        add_alert(
+            "WARNING", "High Reservoir Level",
+            latest["reservoir_level_m"],
+            "Reservoir level is above the selected observation limit."
+        )
+
+    if latest["effective_head_m"] < THRESHOLDS["minimum_effective_head_m"]:
+        add_alert(
+            "WARNING", "Low Effective Head",
+            latest["effective_head_m"],
+            "Effective hydraulic head is below the expected range."
+        )
+
+    if latest["water_discharge"] < THRESHOLDS["minimum_discharge"]:
+        add_alert(
+            "WARNING", "Low Water Discharge",
+            latest["water_discharge"],
+            "Water discharge is below the configured limit."
+        )
+
+    if latest["gate_opening_pct"] > THRESHOLDS["gate_opening_high_pct"]:
+        add_alert(
+            "WARNING", "High Gate Opening",
+            latest["gate_opening_pct"],
+            "Gate opening is above the configured limit."
+        )
+
+    if not (
+        THRESHOLDS["rpm_low"]
+        <= latest["generator_rpm"]
+        <= THRESHOLDS["rpm_high"]
+    ):
+        add_alert(
+            "CRITICAL", "Generator Speed Deviation",
+            latest["generator_rpm"],
+            "Generator speed is outside the selected monitoring band."
+        )
+
+    temperature = latest["generator_winding_temp_c"]
+
+    if temperature >= THRESHOLDS["winding_temp_critical_c"]:
+        add_alert(
+            "CRITICAL", "Generator Winding Temperature Critical",
+            temperature,
+            "Winding temperature is at or above 75 deg C."
+        )
+    elif temperature > THRESHOLDS["winding_temp_warning_c"]:
+        add_alert(
+            "WARNING", "Generator Winding Temperature High",
+            temperature,
+            "Winding temperature is increasing above 70 deg C."
+        )
+
+    return alerts
+
+# ============================================================
+# HTML DASHBOARD COMPONENTS
+# ============================================================
+
+def metric_card(title, value, unit):
+    """Create one KPI card."""
+
+    return f"""
+        <div style="
+            background:#102936;
+            border:1px solid #264957;
+            border-radius:12px;
+            padding:14px;
+            min-height:86px;">
+            <div style="color:#97B2BA;font-size:12px;margin-bottom:9px;">
+                {title}
+            </div>
+            <div style="color:#F3F8F8;font-size:23px;font-weight:bold;">
+                {value}
+                <span style="color:#97B2BA;font-size:12px;">
+                    {unit}
+                </span>
+            </div>
+        </div>
+    """
+
+
+def display_header():
+    """Display dashboard heading."""
+
+    display(HTML(f"""
+        <div style="
+            background:#071722;
+            color:#EDF6F7;
+            padding:22px;
+            border-radius:14px;
+            margin-bottom:14px;">
+            <div style="
+                color:#3FB6C6;
+                letter-spacing:2px;
+                font-size:12px;
+                font-weight:bold;">
+                HYDROELECTRIC GENERATION MONITORING SYSTEM
+            </div>
+            <h1 style="margin:8px 0 5px 0;">{PLANT_NAME}</h1>
+            <p style="color:#9EB6BF;margin:0;">
+                {UNIT_NAME} | Shift operational monitoring dashboard
+            </p>
+        </div>
+    """))
+
+
+def display_kpi_cards(latest):
+    """Display all previous KPIs and the added temperature KPI."""
+
+    display(HTML(f"""
+        <div style="
+            display:grid;
+            grid-template-columns:repeat(5, 1fr);
+            gap:10px;
+            margin-bottom:10px;">
+            {metric_card("Active Power Output", f"{latest['active_power_mw']:.2f}", "MW")}
+            {metric_card("Energy During Shift", f"{latest['energy_shift']:.4f}", SHIFT_ENERGY_UNIT)}
+            {metric_card("Generator Voltage", f"{latest['generator_voltage_kv']:.2f}", "kV")}
+            {metric_card("Frequency", f"{latest['frequency_hz']:.2f}", "Hz")}
+            {metric_card("Generator Speed", f"{latest['generator_rpm']:.2f}", "rpm")}
+        </div>
+
+        <div style="
+            display:grid;
+            grid-template-columns:repeat(5, 1fr);
+            gap:10px;
+            margin-bottom:15px;">
+            {metric_card("Reservoir Level", f"{latest['reservoir_level_m']:.2f}", "m")}
+            {metric_card("Effective Head", f"{latest['effective_head_m']:.2f}", "m")}
+            {metric_card("Water Discharge", f"{latest['water_discharge']:.2f}", FLOW_UNIT)}
+            {metric_card("Gate Opening", f"{latest['gate_opening_pct']:.2f}", "%")}
+            {metric_card("Winding Temperature", f"{latest['generator_winding_temp_c']:.2f}", "deg C")}
+        </div>
+    """))
+
+
+def display_temperature_alarm(latest):
+    """Display temperature alarm and management tips."""
+
+    temperature = latest["generator_winding_temp_c"]
+
+    if temperature >= THRESHOLDS["winding_temp_critical_c"]:
+        title = "CRITICAL ALARM: GENERATOR WINDING TEMPERATURE HIGH"
+        border = "#FF4D57"
+        background = "#4A1820"
+    elif temperature > THRESHOLDS["winding_temp_warning_c"]:
+        title = "WARNING: GENERATOR WINDING TEMPERATURE ABOVE 70 DEG C"
+        border = "#FFB75E"
+        background = "#4A3012"
+    else:
+        display(HTML(f"""
+            <div style="
+                background:#12392D;
+                border:1px solid #35D39A;
+                color:#BDF6E1;
+                padding:13px;
+                border-radius:10px;
+                margin-bottom:15px;">
+                Generator winding temperature is within the selected band:
+                <b>{temperature:.2f} deg C</b>.
+                Typical project-note range: <b>60-65 deg C</b>.
+            </div>
+        """))
+        return
+
+    display(HTML(f"""
+        <div style="
+            background:{background};
+            border:2px solid {border};
+            color:#FFF;
+            padding:18px;
+            border-radius:12px;
+            margin-bottom:15px;">
+            <h2 style="color:{border};margin-top:0;">{title}</h2>
+            <p style="font-size:19px;">
+                Current winding temperature:
+                <b>{temperature:.2f} deg C</b>
+            </p>
+            <p>
+                Warning limit: <b>70.00 deg C</b>
+                &nbsp; | &nbsp;
+                Critical limit: <b>75.00 deg C</b>
+            </p>
+
+            <h3>Temperature Management Tips</h3>
+            <ol style="line-height:1.65;">
+                <li>Inform the authorised control-room operator and follow station SOP.</li>
+                <li>Review generator load and reduce load only when authorised.</li>
+                <li>Inspect generator air-cooler performance and cooling-air flow.</li>
+                <li>Check thrust-bearing oil condition and the thrust-bearing cooler.</li>
+                <li>Clean the thrust-bearing cooler if inspection and SOP require it.</li>
+                <li>Arrange winding-insulation inspection if temperature remains high.</li>
+            </ol>
+
+            <small>
+                Demonstration guidance only. Real plant actions must follow
+                approved limits, protection settings and authorised procedures.
+            </small>
+        </div>
+    """))
+
+# ============================================================
+# GRAPHS
+# ============================================================
+
+def create_dashboard_charts(data):
+    """Create all previous graphs and the new temperature graph."""
+
+    figure = make_subplots(
+        rows=4,
+        cols=2,
+        subplot_titles=(
+            "Active Power Output (MW)",
+            "Generator Voltage and Frequency",
+            "Reservoir Level and Effective Head",
+            "Water Discharge and Gate Opening",
+            "Generator Speed (rpm)",
+            "Energy Generated During Shift",
+            "Generator Winding Temperature (deg C)",
+            "Temperature Status Information"
+        ),
+        specs=[
+            [{"secondary_y": False}, {"secondary_y": True}],
+            [{"secondary_y": True}, {"secondary_y": True}],
+            [{"secondary_y": False}, {"secondary_y": False}],
+            [{"secondary_y": False}, {"type": "table"}]
+        ]
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["active_power_mw"],
+            name="Active Power (MW)", mode="lines",
+            line=dict(color="#3FB6C6", width=2)
+        ), row=1, col=1
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["generator_voltage_kv"],
+            name="Voltage (kV)", mode="lines",
+            line=dict(color="#FFB75E", width=2)
+        ), row=1, col=2, secondary_y=False
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["frequency_hz"],
+            name="Frequency (Hz)", mode="lines",
+            line=dict(color="#66A7FF", width=2)
+        ), row=1, col=2, secondary_y=True
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["reservoir_level_m"],
+            name="Reservoir Level (m)", mode="lines",
+            line=dict(color="#44C7DD", width=2)
+        ), row=2, col=1, secondary_y=False
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["effective_head_m"],
+            name="Effective Head (m)", mode="lines",
+            line=dict(color="#F6C356", width=2)
+        ), row=2, col=1, secondary_y=True
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["water_discharge"],
+            name=f"Discharge ({FLOW_UNIT})", mode="lines",
+            line=dict(color="#35D39A", width=2)
+        ), row=2, col=2, secondary_y=False
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["gate_opening_pct"],
+            name="Gate Opening (%)", mode="lines",
+            line=dict(color="#F48FB1", width=2)
+        ), row=2, col=2, secondary_y=True
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["generator_rpm"],
+            name="Generator Speed (rpm)", mode="lines",
+            line=dict(color="#A98DFF", width=2)
+        ), row=3, col=1
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["energy_shift"],
+            name=f"Shift Energy ({SHIFT_ENERGY_UNIT})", mode="lines",
+            line=dict(color="#F6C356", width=2)
+        ), row=3, col=2
+    )
+
+    figure.add_trace(
+        go.Scatter(
+            x=data["timestamp"], y=data["generator_winding_temp_c"],
+            name="Winding Temperature (deg C)",
+            mode="lines+markers",
+            line=dict(color="#FF7479", width=3)
+        ), row=4, col=1
+    )
+
+    # Warning and critical reference lines for temperature graph.
+    figure.add_hline(
+        y=THRESHOLDS["winding_temp_warning_c"],
+        line_dash="dash",
+        line_color="#FFB75E",
+        row=4, col=1
+    )
+
+    figure.add_hline(
+        y=THRESHOLDS["winding_temp_critical_c"],
+        line_dash="dash",
+        line_color="#FF4D57",
+        row=4, col=1
+    )
+
+    temperature_table = pd.DataFrame({
+        "Temperature Band": [
+            "Normal project-note range",
+            "Warning alarm",
+            "Critical alarm"
+        ],
+        "Selected Value": [
+            "60-65 deg C",
+            "Above 70 deg C",
+            "75 deg C or above"
+        ]
+    })
+
+    figure.add_trace(
+        go.Table(
+            header=dict(
+                values=list(temperature_table.columns),
+                fill_color="#264957",
+                font=dict(color="#FFFFFF"),
+                align="left"
+            ),
+            cells=dict(
+                values=[
+                    temperature_table["Temperature Band"],
+                    temperature_table["Selected Value"]
+                ],
+                fill_color="#102936",
+                font=dict(color="#EDF6F7"),
+                align="left"
+            )
+        ), row=4, col=2
+    )
+
+    figure.update_layout(
+        height=1380,
+        title=f"{PLANT_NAME} - Operational Trend Analysis",
+        template="plotly_dark",
+        paper_bgcolor="#071722",
+        plot_bgcolor="#102936",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.10,
+            xanchor="center",
+            x=0.5
+        ),
+        margin=dict(l=45, r=40, t=85, b=140)
+    )
+
+    figure.update_xaxes(showgrid=True, gridcolor="#264957")
+    figure.update_yaxes(showgrid=True, gridcolor="#264957")
+    figure.show()
+
+# ============================================================
+# DATA-POINT TABLES
+# ============================================================
+
+def display_data_information(data, latest):
+    """Display latest data point, recent readings and current alerts."""
+
+    alerts = evaluate_alerts(latest)
+
+    display(HTML("""
+        <h3 style="color:#EDF6F7;background:#071722;padding:10px;">
+            Latest Operating Data Point
+        </h3>
+    """))
+
+    latest_table = pd.DataFrame([{
+        "Timestamp": latest["timestamp"],
+        "Active Power (MW)": latest["active_power_mw"],
+        "Energy Shift (MU)": latest["energy_shift"],
+        "Voltage (kV)": latest["generator_voltage_kv"],
+        "Frequency (Hz)": latest["frequency_hz"],
+        "Reservoir Level (m)": latest["reservoir_level_m"],
+        "Effective Head (m)": latest["effective_head_m"],
+        f"Discharge ({FLOW_UNIT})": latest["water_discharge"],
+        "Gate Opening (%)": latest["gate_opening_pct"],
+        "Speed (rpm)": latest["generator_rpm"],
+        "Winding Temp (deg C)": latest["generator_winding_temp_c"]
+    }])
+
+    display(latest_table)
+
+    display(HTML("""
+        <h3 style="color:#EDF6F7;background:#071722;padding:10px;">
+            Current Alerts
+        </h3>
+    """))
+
+    if alerts:
+        display(pd.DataFrame(alerts))
+    else:
+        display(HTML("""
+            <div style="
+                background:#12392D;
+                color:#35D39A;
+                padding:12px;
+                border-radius:8px;">
+                No alert generated for the latest data point.
+            </div>
+        """))
+
+    display(HTML("""
+        <h3 style="color:#EDF6F7;background:#071722;padding:10px;">
+            Most Recent 10 Data Points
+        </h3>
+    """))
+
+    display(data.tail(10).reset_index(drop=True))
+
+# ============================================================
+# DASHBOARD CONTROLLER
+# ============================================================
+
+def show_dashboard(data, history_window_hours=24):
+    """Display dashboard and export every stored data point."""
+
+    clear_output(wait=True)
+
+    latest = data.iloc[-1]
+    chart_data = data[
+        data["timestamp"] >= datetime.now() - timedelta(hours=history_window_hours)
+    ].copy()
+
+    display_header()
+    display_kpi_cards(latest)
+    display_temperature_alarm(latest)
+    create_dashboard_charts(chart_data)
+    display_data_information(data, latest)
+
+    export_file = "rani_avanti_bai_complete_operational_data.csv"
+    data.to_csv(export_file, index=False)
+
+    display(HTML(f"""
+        <div style="
+            background:#102936;
+            border:1px solid #264957;
+            color:#D9E7EA;
+            padding:14px;
+            border-radius:10px;
+            margin-top:16px;">
+            <b>Total Stored Data Points:</b> {len(data)}
+            &nbsp; | &nbsp;
+            <b>Displayed Graph Window:</b> {history_window_hours} Hours
+            &nbsp; | &nbsp;
+            <b>CSV Export:</b> {export_file}
+            <br><br>
+            <small>
+                Historical values and alarm thresholds are included for
+                educational demonstration. They are not official plant limits.
+            </small>
+        </div>
+    """))
+
+
+def generate_live_updates(data, number_of_readings=10, delay_seconds=2):
+    """Add live simulated samples and refresh the dashboard."""
+
+    for _ in range(number_of_readings):
+        new_reading = pd.DataFrame([generate_live_reading()])
+        data = pd.concat([data, new_reading], ignore_index=True)
+
+        show_dashboard(
+            data,
+            history_window_hours=24
+        )
+
+        time.sleep(delay_seconds)
+
+    return data
+
+# ============================================================
+# RUN APPLICATION
+# ============================================================
+
+operational_data = generate_historical_data()
+
+# Show the dashboard immediately.
+show_dashboard(
+    operational_data,
+    history_window_hours=24
+)
+
+# Generate 10 simulated live readings.
+# Increase or decrease these values as required.
+operational_data = generate_live_updates(
+    operational_data,
+    number_of_readings=10,
+    delay_seconds=2
+)
